@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package event.v1;
+option go_package = "github.com/Venamuss/webhook-dispatcher/api/proto/event/v1;eventv1";
+
+service EventIngestionService {
+
+    rpc PublishEvent (PublishEventRequest) returns (PublishEventResponse);
+
+    rpc PublishBatch (PublishBatchRequest) returns (PublishBatchResponse);
+}
+
+message EventPayload {
+  string event_id = 1;               // Уникальный ID события (для идемпотентности)
+  string tenant_id = 2;              // ID тенанта
+  string event_type = 3;             // Тип события (e.g. order.created)
+  bytes data_json = 4;               // Raw JSON тела события
+  map<string, string> metadata = 5;  // Метаданные и кастомные заголовки
+}
+
+message PublishEventRequest {
+    EventPayload event = 1;
+}
+
+message PublishEventResponse {
+    string event_id = 1;
+    string status = 2;                 // ACCEPTED / QUEUED
+}
+
+message PublishBatchRequest {
+    repeated EventPayload events = 1;
+}
+
+message PublishBatchResponse {
+    int32 accepted_count = 1;
+    repeated string failed_event_ids = 2;
+}
