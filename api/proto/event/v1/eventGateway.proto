@@ -3,6 +3,12 @@ syntax = "proto3";
 package event.v1;
 option go_package = "github.com/Venamuss/webhook-dispatcher/api/proto/event/v1;eventv1";
 
+enum PublishStatus {
+    PUBLISH_STATUS_UNSPECIFIED = 0;
+    PUBLISH_STATUS_ACCEPTED = 1;
+    PUBLISH_STATUS_QUEUED = 2;
+}
+
 service EventIngestionService {
 
     rpc PublishEvent (PublishEventRequest) returns (PublishEventResponse);
@@ -24,14 +30,21 @@ message PublishEventRequest {
 
 message PublishEventResponse {
     string event_id = 1;
-    string status = 2;                 // ACCEPTED / QUEUED
+    PublishStatus status = 2;                 // ACCEPTED / QUEUED
 }
 
 message PublishBatchRequest {
     repeated EventPayload events = 1;
 }
 
+message BatchItemError {
+    string event_id = 1;
+    string error_code = 2; 
+    string message = 3;   
+}
+
 message PublishBatchResponse {
     int32 accepted_count = 1;
-    repeated string failed_event_ids = 2;
+    int32 failed_count = 2;
+    repeated BatchItemError failed_items = 3;
 }

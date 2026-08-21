@@ -1,0 +1,117 @@
+.
+├── api/                        # Протоколы и схемы контрактов
+│   ├── proto/                  # Protobuf файлы для gRPC
+│   └── openapi/                # OpenAPI / Swagger спецификации
+├── cmd/                        # Точки входа для каждого микросервиса
+│   ├── gateway/
+│   │   └── main.go
+│   ├── dispatcher/
+│   │   └── main.go
+│   └── subscription-api/
+│       └── main.go
+├── internal/                   # Приватный код проекта (недоступен для импорта извне)
+│   ├── delivery/               # Feature: пайплайн отправки вебхуков (Dispatcher)
+│   │   ├── client.go           # HTTP клиент с HMAC-подписью
+│   │   ├── handler.go          # Kafka consumer handler
+│   │   ├── ratelimit.go        # Redis rate limiter
+│   │   ├── retry.go            # Экспоненциальный backoff и логика ретраев
+│   │   └── service.go          # Оркестрация доставки
+│   ├── subscription/           # Feature: управление подписчиками (Subscription API)
+│   │   ├── handler/            # HTTP / REST handlers (chi/gin/fiber)
+│   │   ├── repository/         # PostgreSQL CRUD операции
+│   │   ├── model.go            # Доменная модель Subscription & Endpoint
+│   │   └── service.go          # Бизнес-логика валидации и управления
+│   ├── event/                  # Feature: прием и фиксация событий (Gateway)
+│   │   ├── grpc/               # gRPC server implementation
+│   │   ├── outbox/             # Transactional Outbox worker & storage
+│   │   └── service.go          # Прием и публикация события
+│   └── platform/               # Инфраструктурный общий код (не содержит бизнес-логики)
+│       ├── database/           # Инициализация pgxpool / миграции
+│       ├── kafka/              # Обертки над sarama / segmentio-kafka
+│       ├── redis/              # Клиент Redis
+│       └── telemetry/          # Настройка OpenTelemetry (TracerProvider, MeterProvider)
+├── migrations/                 # SQL файлы миграций (golang-migrate)
+│   ├── 000001_init_schema.up.sql
+│   └── 000001_init_schema.down.sql
+├── docker-compose.yml          # Kafka, Postgres, Redis, Jaeger, Services
+├── Dockerfile                  # Multi-stage Dockerfile для сборки сервисов
+├── Makefile                    # Команды: lint, test, proto-gen, run
+└── go.mod
+
+Метод,      Путь,                                   Описание
+POST,       /api/v1/endpoints,                       Создать новую подписку на вебхуки
+GET,        /api/v1/endpoints,                       Список эндпоинтов с пагинацией (?limit=20&offset=0)
+GET,        /api/v1/endpoints/{id},                  Получить информацию об эндпоинте
+PATCH,      /api/v1/endpoints/{id},                 "Обновить URL, список событий или статус активности"
+DELETE,     /api/v1/endpoints/{id},                 Удалить эндпоинт
+POST,       /api/v1/endpoints/{id}/rotate-secret,   Сгенерировать новый HMAC-ключ подписи
+
+Пример POST /api/v1/endpoints:
+Request Body:
+
+JSON
+{
+  "tenant_id": "tenant_99812",
+  "url": "https://api.merchant.com/webhooks",
+  "description": "Production billing webhooks",
+  "subscribed_events": ["order.created", "order.paid", "refund.issued"],
+  "rate_limit_rps": 100
+}
+
+Response (201 Created):
+
+JSON
+{
+  "id": "e3b0c442-98fc-1c14-9a00-000000000001",
+  "tenant_id": "tenant_99812",
+  "url": "https://api.merchant.com/webhooks",
+  "secret_key": "whsec_9a8b7c6d5e4f3a2b1c0d...", 
+  "subscribed_events": ["order.created", "order.paid", "refund.issued"],
+  "is_active": true,
+  "rate_limit_rps": 100,
+  "created_at": "2026-08-18T19:00:00Z"
+}
+
+Метод,      Путь,                                   Описание
+GET,        /api/v1/endpoints/{id}/deliveries,      История попыток доставки по конкретному эндпоинту
+GET,        /api/v1/deliveries/{id},                "Детальная информация о попытке (заголовки, тело ответа)"
+POST,       /api/v1/deliveries/{id}/retry,          учной триггер повторной отправки упавшего события
+
+Пример GET /api/v1/deliveries/{id}:
+Response (200 OK):
+
+JSON
+{
+  "id": "7fa82b01-52ab-4177-8321-c4d6f8369112",
+  "event_id": "evt_order_129381029",
+  "endpoint_id": "e3b0c442-98fc-1c14-9a00-000000000001",
+  "attempt_number": 3,
+  "status": "FAILED",
+  "http_status_code": 504,
+  "execution_time_ms": 5002,
+  "error_message": "context deadline exceeded (Client.Timeout)",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "created_at": "2026-08-18T19:05:12Z"
+}
+
+4. Спецификация исходящего HTTP-запроса к клиентуКогда Dispatch Worker выполняет вызов клиентского эндпоинта, он формирует следующий HTTP POST-запрос:HTTPPOST /webhooks HTTP/1.1
+Host: api.merchant.com
+Content-Type: application/json
+User-Agent: Webhook-Dispatcher/1.0
+X-Event-ID: evt_order_129381029
+X-Event-Type: order.paid
+X-Event-Timestamp: 1755543600
+X-Signature-SHA256: t=1755543600,v1=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+
+{
+  "event_id": "evt_order_129381029",
+  "event_type": "order.paid",
+  "timestamp": "2026-08-18T19:00:00Z",
+  "data": {
+    "order_id": "ord_9901",
+    "amount": 4500,
+    "currency": "USD"
+  }
+}
+X-Signature-SHA256 формируется по стандарту Stripe: HMAC_SHA256(timestamp + "." + raw_body, secret_key). Это защищает клиента от Replay-атак.traceparent передает сквозной контекст OpenTelemetry в инфраструктуру клиента.

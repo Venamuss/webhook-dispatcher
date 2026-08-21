@@ -15,13 +15,8 @@ import (
 	"github.com/Venamuss/webhook-dispatcher/migrations"
 )
 
-type Database interface {
-	Init(connectionString string) error
-	RunMigrations() error
-}
-
 type Postgres struct {
-	pool *pgxpool.Pool
+	Pool *pgxpool.Pool
 }
 
 func New(ctx context.Context, connectionString string) (*Postgres, error) {
@@ -40,16 +35,16 @@ func New(ctx context.Context, connectionString string) (*Postgres, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Postgres{pool: pool}, nil
+	return &Postgres{Pool: pool}, nil
 }
 
 func (p *Postgres) Close() {
-	if p.pool != nil {
-		p.pool.Close()
+	if p.Pool != nil {
+		p.Pool.Close()
 	}
 }
 func (p *Postgres) RunMigrations() error {
-	db := stdlib.OpenDBFromPool(p.pool)
+	db := stdlib.OpenDBFromPool(p.Pool)
 	defer db.Close()
 
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
